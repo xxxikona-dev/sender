@@ -1,67 +1,56 @@
 import aiosqlite
-from config import DB_NAME
 
+DB_NAME = "bot_database.db"
 
 async def init_db():
-    """Инициализация таблиц базы данных при старте"""
     async with aiosqlite.connect(DB_NAME) as db:
-        # Таблица для хранения авторизованных юзерботов
-        await db.execute(
-            """
+        # Создаем таблицу аккаунтов с привязкой к user_id
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
-                phone TEXT PRIMARY KEY,
-                string_session TEXT NOT NULL
+                user_id INTEGER,
+                phone TEXT,
+                session_string TEXT,
+                PRIMARY KEY (user_id, phone)
             )
-        """
-        )
-        # Таблица для хранения списка групп для рассылки
-        await db.execute(
-            """
+        """)
+        # Создаем таблицу групп с привязкой к user_id
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_url TEXT UNIQUE
+                user_id INTEGER,
+                group_url TEXT,
+                PRIMARY KEY (user_id, group_url)
             )
-        """
-        )
+        """)
         await db.commit()
 
-
-async def add_account(phone: str, string_session: str):
-    """Сохранение новой String-сессии в базу"""
+async def add_account(user_id: int, phone: str, session_string: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO accounts (phone, string_session) VALUES (?, ?)",
-            (phone, string_session),
+            "INSERT OR REPLACE INTO accounts (user_id, phone, session_string) VALUES (?, ?, ?)",
+            (user_id, phone, session_string)
         )
         await db.commit()
 
-
-async def get_accounts():
-    """Получение всех сохраненных аккаунтов"""
+async def get_accounts(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT phone, string_session FROM accounts") as cursor:
+        async with db.execute("SELECT phone, session_string FROM accounts WHERE user_id = ?", (user_id,)) as cursor:
             return await cursor.fetchall()
 
-
-async def add_group(url: str):
-    """Добавление одной группы в базу (дубликаты игнорируются)"""
+async def add_group(user_id: int, group_url: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO groups (group_url) VALUES (?)", (url,)
+            "INSERT OR IGNORE INTO groups (user_id, group_url) VALUES (?, ?)",
+            (user_id, group_url)
         )
         await db.commit()
 
-
-async def get_groups():
-    """Получение полного списка групп для рассылки"""
+async def get_groups(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT group_url FROM groups") as cursor:
+        async with db.execute("SELECT group_url FROM groups WHERE user_id = ?", (user_id,)) as cursor:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
-
-async def clear_groups():
-    """Полное удаление всех групп из базы данных"""
+async def clear_groups(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("DELETE FROM groups")
+        await db.execute("DELETE FROM groups WHERE user_id = ?", (user_id,))
         await db.commit()
