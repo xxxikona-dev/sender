@@ -205,8 +205,7 @@ async def change_text_cmd(callback: types.CallbackQuery, state: FSMContext):
     text = (
         f"📝 **РЕДАКТИРОВАНИЕ ТЕКСТА РАССЫЛКИ**\n\n"
         f"📌 **Текущий сохраненный текст:**\n"
-        f"```\n{current_text}\n
-```\n"
+        f"```\n{current_text}\n```\n"
         f"📥 Отправьте новое сообщение в чат, чтобы перезаписать его."
     )
     
@@ -214,7 +213,6 @@ async def change_text_cmd(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(TextStates.waiting_for_text)
     await state.update_data(menu_msg_id=callback.message.message_id)
     await callback.answer()
-
 
 @dp.message(TextStates.waiting_for_text)
 async def process_new_text(message: types.Message, state: FSMContext):
