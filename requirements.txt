@@ -1,4 +1,4 @@
 aiogram==3.18.0
-pyrogram==2.0.106
+venty-pyrogram
 tgcrypto==1.2.5
 aiosqlite==0.20.0
