@@ -1,7 +1,7 @@
 import os
 
 # Токен главного Telegram-бота из @BotFather
-BOT_TOKEN = "8685634422:AAEu4v0GJ61WL_MudkoB-2K1cfgegYX6puE"
+BOT_TOKEN = "8946536242:AAFv1r0zWPbq53pyoOq9zuyJ_628YLrYuRA"
 
 # Данные API (получать на my.telegram.org)
 API_ID = 29797368  # Должно быть числом (int)
