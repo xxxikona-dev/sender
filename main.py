@@ -25,7 +25,13 @@ import database as db
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=config.BOT_TOKEN)
+# БОТ ПОДТЯГИВАЕТ ТОКЕН ИЗ НАСТРОЕК ХОСТИНГА (ОКРУЖЕНИЯ)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("ОШИБКА: Переменная окружения 'BOT_TOKEN' не найдена на хостинге!")
+
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Словарь для временного удержания объектов авторизации Pyrogram {chat_id: client_instance}
@@ -50,7 +56,7 @@ def get_user_settings(user_id: int) -> dict:
 
 
 def get_random_proxy_config() -> dict | None:
-    """Читает файл proxies.txt и возвращает случайный прокси в формате для Pyrogram"""
+    """Читает файл proxies.txt и возвращает случайный прокси в формате для Pyrogram (HTTP)"""
     file_path = "proxies.txt"
     
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
@@ -68,7 +74,7 @@ def get_random_proxy_config() -> dict | None:
         
         if len(parts) == 4:
             return {
-                "scheme": "socks5",  # Измени на "http", если твои прокси работают по протоколу HTTP
+                "scheme": "http",  # Используем HTTP. Смени на socks5, если прокси этого типа
                 "hostname": parts[0],
                 "port": int(parts[1]),
                 "username": parts[2],
@@ -213,6 +219,7 @@ async def change_text_cmd(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(TextStates.waiting_for_text)
     await state.update_data(menu_msg_id=callback.message.message_id)
     await callback.answer()
+
 
 @dp.message(TextStates.waiting_for_text)
 async def process_new_text(message: types.Message, state: FSMContext):
@@ -387,14 +394,12 @@ async def process_phone(message: types.Message, state: FSMContext):
     try: await message.delete()
     except Exception: pass
 
-    # Выбираем случайный рабочий прокси из proxies.txt
     proxy_config = get_random_proxy_config()
     if proxy_config:
         logger.info(f"[Proxy] Для {phone} выбран IP: {proxy_config['hostname']}:{proxy_config['port']}")
     else:
         logger.warning(f"[Proxy] Файл proxies.txt пуст. Подключение напрямую.")
 
-    # Создаём изолированный инстанс клиента
     client = Client(
         name=f"auth_{user_id}_{phone}", 
         api_id=config.API_ID, 
@@ -555,7 +560,6 @@ async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
 
 
 async def send_messages_from_account(user_id: int, phone: str, session_str: str, groups: list):
-    # Каждому аккаунту выдаём случайный прокси из списка перед стартом волны рассылки
     proxy_config = get_random_proxy_config()
     
     app = Client(
