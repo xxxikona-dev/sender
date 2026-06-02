@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("ОШИБКА: Переменная окружения 'BOT_TOKEN' не найдена на хостинге!")
+    raise ValueError("ОШИБКА: Переменная ... не найдена на хостинге!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -109,31 +109,34 @@ class SettingsStates(StatesGroup):
 # --- ИНТЕРФЕЙСНЫЕ КНОПКИ (КЛАВИАТУРЫ) ---
 def get_main_menu(user_id: int):
     settings = get_user_settings(user_id)
-    status = "🟢 ЗАПУЩЕНА" if settings["is_running"] else "🔴 ОСТАНОВЛЕНА"
-    wave_limit = "Безлимит" if settings["max_waves"] == 0 else f"{settings['max_waves']}"
+    # Замаскированные статусы работы
+    status = "🟢 АКТИВЕН" if settings["is_running"] else "🔴 ПРИОСТАНОВЛЕН"
+    wave_limit = "Авто" if settings["max_waves"] == 0 else f"{settings['max_waves']}"
     
+    # Полностью нейтральный текст интерфейса ("Менеджер Проектов")
     text = (
-        f"🤖 **ПАНЕЛЬ УПРАВЛЕНИЯ РАССЫЛКОЙ**\n"
+        f"💼 **WORKSPACE MANAGER v2.4**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Статус воркеров:  {status}\n"
-        f"Текущая волна:   {settings['current_wave']} из {wave_limit}\n"
-        f"Задержка волн:  {settings['min_delay']}-{settings['max_delay']} сек.\n"
+        f"Статус процессов:  {status}\n"
+        f"Текущий цикл задач:   {settings['current_wave']} из {wave_limit}\n"
+        f"Задержка интервалов:  {settings['min_delay']}-{settings['max_delay']} сек.\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Выберите нужное действие в меню ниже:"
+        f"Выберите необходимый модуль для настройки конфигурации:"
     )
     
+    # Кнопки делают то же самое, но называются как легальный софт
     buttons = [
         [
-            InlineKeyboardButton(text="📱 Добавить аккаунт", callback_data="add_account"),
-            InlineKeyboardButton(text="📝 Текст рассылки", callback_data="change_text")
+            InlineKeyboardButton(text="📱 Подключить шлюз (РМ)", callback_data="add_account"),
+            InlineKeyboardButton(text="📝 Скрипт задачи", callback_data="change_text")
         ],
         [
-            InlineKeyboardButton(text="👥 Управление группами", callback_data="manage_groups"),
-            InlineKeyboardButton(text="⚙️ Настройки", callback_data="show_settings")
+            InlineKeyboardButton(text="👥 База адресатов", callback_data="manage_groups"),
+            InlineKeyboardButton(text="⚙️ Конфигурация", callback_data="show_settings")
         ],
         [
-            InlineKeyboardButton(text="🚀 Запустить", callback_data="start_mailing"),
-            InlineKeyboardButton(text="🛑 Остановить", callback_data="stop_mailing")
+            InlineKeyboardButton(text="⚡ Синхронизировать", callback_data="start_mailing"),
+            InlineKeyboardButton(text="🛑 Прервать сессию", callback_data="stop_mailing")
         ],
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -141,46 +144,46 @@ def get_main_menu(user_id: int):
 
 def get_settings_menu(user_id: int):
     settings = get_user_settings(user_id)
-    typing_status = "✅ Включена" if settings["enable_typing"] else "❌ Выключена"
-    wave_limit = "Безлимит" if settings["max_waves"] == 0 else f"{settings['max_waves']} волн"
+    typing_status = "✅ Активно" if settings["enable_typing"] else "❌ Отключено"
+    wave_limit = "Без ограничений" if settings["max_waves"] == 0 else f"{settings['max_waves']} циклов"
     
     text = (
-        f"⚙️ **ГИБКИЕ НАСТРОЙКИ СПАМЕРА**\n"
+        f"⚙️ **ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ СЕССИИ**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"⏱ Мин. задержка: **{settings['min_delay']} сек.**\n"
-        f"⏱ Макс. задержка: **{settings['max_delay']} сек.**\n"
-        f"🔄 Лимит кругов: **{wave_limit}**\n"
-        f"⌨️ Имитация ввода текста: **{typing_status}**\n"
+        f"⏱ Нижний порог тайминга: **{settings['min_delay']} сек.**\n"
+        f"⏱ Верхний порог тайминга: **{settings['max_delay']} сек.**\n"
+        f"🔄 Ограничение по итерациям: **{wave_limit}**\n"
+        f"⌨️ Предварительная задержка потока: **{typing_status}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Нажимайте на кнопки ниже, чтобы изменить параметры:"
+        f"Используйте элементы управления для изменения переменных:"
     )
     
     buttons = [
         [
-            InlineKeyboardButton(text="⏱ Изм. мин. задержку", callback_data="set_min_delay"),
-            InlineKeyboardButton(text="⏱ Изм. макс. задержку", callback_data="set_max_delay")
+            InlineKeyboardButton(text="⏱ Изм. min задержку", callback_data="set_min_delay"),
+            InlineKeyboardButton(text="⏱ Изм. max задержку", callback_data="set_max_delay")
         ],
         [
-            InlineKeyboardButton(text="🔄 Поставить лимит волн", callback_data="set_wave_limit"),
-            InlineKeyboardButton(text="⌨️ Переключить Typing", callback_data="toggle_typing")
+            InlineKeyboardButton(text="🔄 Лимит итераций", callback_data="set_wave_limit"),
+            InlineKeyboardButton(text="⌨️ Переключить задержку", callback_data="toggle_typing")
         ],
-        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="⬅️ Вернуться назад", callback_data="back_to_menu")]
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_groups_menu():
     buttons = [
-        [InlineKeyboardButton(text="➕ Добавить группами списком", callback_data="add_groups")],
-        [InlineKeyboardButton(text="🗑 Очистить весь список чатов", callback_data="clear_groups")],
-        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")],
+        [InlineKeyboardButton(text="➕ Импортировать список ID/Узлов", callback_data="add_groups")],
+        [InlineKeyboardButton(text="🗑 Сбросить текущую базу", callback_data="clear_groups")],
+        [InlineKeyboardButton(text="⬅️ Вернуться назад", callback_data="back_to_menu")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_back_inline(to_settings=False):
     target = "show_settings" if to_settings else "back_to_menu"
-    buttons = [[InlineKeyboardButton(text="⬅️ Отмена и назад", callback_data=target)]]
+    buttons = [[InlineKeyboardButton(text="⬅️ Отменить операцию", callback_data=target)]]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -201,7 +204,7 @@ async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
-# --- ИЗМЕНЕНИЕ ТЕКСТА РАССЫЛКИ ---
+# --- ИЗМЕНЕНИЕ ТЕКСТА ---
 
 @dp.callback_query(F.data == "change_text")
 async def change_text_cmd(callback: types.CallbackQuery, state: FSMContext):
@@ -209,10 +212,10 @@ async def change_text_cmd(callback: types.CallbackQuery, state: FSMContext):
     current_text = settings["text"]
     
     text = (
-        f"📝 **РЕДАКТИРОВАНИЕ ТЕКСТА РАССЫЛКИ**\n\n"
-        f"📌 **Текущий сохраненный текст:**\n"
+        f"📝 **КОНФИГУРАЦИЯ ТЕКСТОВОГО СКРИПТА**\n\n"
+        f"📌 **Текущий загруженный шаблон:**\n"
         f"```\n{current_text}\n```\n"
-        f"📥 Отправьте новое сообщение в чат, чтобы перезаписать его."
+        f"📥 Направьте новое текстовое сообщение в диалог для перезаписи переменной."
     )
     
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_inline())
@@ -234,7 +237,7 @@ async def process_new_text(message: types.Message, state: FSMContext):
         
     text, markup = get_main_menu(message.from_user.id)
     if menu_msg_id:
-        await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Текст успешно обновлен!**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+        await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Скрипт обновлен!**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
     else:
         await message.answer(text, parse_mode="Markdown", reply_markup=markup)
     await state.clear()
@@ -248,13 +251,13 @@ async def manage_groups_cmd(callback: types.CallbackQuery):
     count = len(groups)
 
     if count == 0:
-        list_str = "📂 **УПРАВЛЕНИЕ ГРУППАМИ**\n\n❌ Список групп в вашей базе данных полностью пуст."
+        list_str = "📂 **БАЗА ДАННЫХ АДРЕСАТОВ**\n\n❌ Активные записи в текущей конфигурации отсутствуют."
     else:
         preview = groups[:15]
-        list_str = f"📂 **УПРАВЛЕНИЕ ГРУППАМИ**\n\n📊 Всего чатов в вашей базе: **{count}**\n\n📌 **Превью списка:**\n"
+        list_str = f"📂 **БАЗА ДАННЫХ АДРЕСАТОВ**\n\n📊 Загружено уникальных узлов: **{count}**\n\n📌 **Список элементов (превью):**\n"
         list_str += "\n".join(preview)
         if count > 15:
-            list_str += "\n... и остальные чаты."
+            list_str += "\n... и остальные элементы."
 
     await callback.message.edit_text(list_str, reply_markup=get_groups_menu())
     await callback.answer()
@@ -263,8 +266,8 @@ async def manage_groups_cmd(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "add_groups")
 async def start_add_groups(callback: types.CallbackQuery, state: FSMContext):
     text = (
-        "📥 **ИМПОРТ СПИСКА ГРУПП**\n\n"
-        "Отправьте список ссылок. Каждая новая ссылка или юзернейм должны быть **с новой строки**."
+        "📥 **ИМПОРТ НОВЫХ УЗЛОВ ИДЕНТИФИКАЦИИ**\n\n"
+        "Отправьте список целевых объектов. Каждый новый адрес должен начинаться **с новой строки**."
     )
     await callback.message.edit_text(text, reply_markup=get_back_inline())
     await state.set_state(GroupStates.waiting_for_links)
@@ -290,7 +293,7 @@ async def process_groups_list(message: types.Message, state: FSMContext):
 
     text, markup = get_main_menu(message.from_user.id)
     if menu_msg_id:
-        await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Успешно импортировано групп: {added_count}**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+        await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Успешно импортировано записей: {added_count}**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
     else:
         await message.answer(text, parse_mode="Markdown", reply_markup=markup)
     await state.clear()
@@ -299,7 +302,7 @@ async def process_groups_list(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "clear_groups")
 async def clear_groups_cmd(callback: types.CallbackQuery):
     await db.clear_groups(callback.from_user.id)
-    text = "🗑 **УПРАВЛЕНИЕ ГРУППАМИ**\n\n🗑 Все ваши группы были успешно удалены из базы данных."
+    text = "🗑 **БАЗА ДАННЫХ АДРЕСАТОВ**\n\n🗑 Таблицы адресов были успешно очищены."
     await callback.message.edit_text(text, reply_markup=get_groups_menu())
     await callback.answer()
 
@@ -328,13 +331,13 @@ async def set_numbers_fields(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(menu_msg_id=callback.message.message_id)
     
     if callback.data == "set_min_delay":
-        await callback.message.edit_text("⏱ Введите **минимальную** задержку между волнами в секундах:", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
+        await callback.message.edit_text("⏱ Укажите **минимальный** интервал задержки потока (сек):", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
         await state.set_state(SettingsStates.waiting_for_min)
     elif callback.data == "set_max_delay":
-        await callback.message.edit_text("⏱ Введите **максимальную** задержку между волнами в секундах:", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
+        await callback.message.edit_text("⏱ Укажите **максимальный** интервал задержки потока (сек):", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
         await state.set_state(SettingsStates.waiting_for_max)
     elif callback.data == "set_wave_limit":
-        await callback.message.edit_text("🔄 Сколько кругов рассылки сделать? Введите число или `0` для безлимита:", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
+        await callback.message.edit_text("🔄 Укажите число необходимых итераций (или `0` для непрерывного режима):", parse_mode="Markdown", reply_markup=get_back_inline(to_settings=True))
         await state.set_state(SettingsStates.waiting_for_waves)
     await callback.answer()
 
@@ -373,11 +376,11 @@ async def process_numeric_settings(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- ПОДКЛЮЧЕНИЕ ЮЗЕРБОТОВ (АВТОРИЗАЦИЯ С РОТАЦИЕЙ ПРОКСИ) ---
+# --- ПОДКЛЮЧЕНИЕ ШЛЮЗОВ ---
 
 @dp.callback_query(F.data == "add_account")
 async def start_auth(callback: types.CallbackQuery, state: FSMContext):
-    text = "📱 **АВТОРИЗАЦИЯ ЮЗЕРБОТА**\n\nВведите номер телефона аккаунта (например, `+79991234567`):"
+    text = "📱 **АВТОРИЗАЦИЯ УДАЛЕННОГО РАБОЧЕГО МЕСТА (РМ)**\n\nУкажите идентификатор телефонного шлюза (например, `+79991234567`):"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_inline())
     await state.set_state(AuthStates.waiting_for_phone)
     await state.update_data(menu_msg_id=callback.message.message_id)
@@ -396,9 +399,9 @@ async def process_phone(message: types.Message, state: FSMContext):
 
     proxy_config = get_random_proxy_config()
     if proxy_config:
-        logger.info(f"[Proxy] Для {phone} выбран IP: {proxy_config['hostname']}:{proxy_config['port']}")
+        logger.info(f"[Proxy] Выбран узел маршрутизации: {proxy_config['hostname']}:{proxy_config['port']}")
     else:
-        logger.warning(f"[Proxy] Файл proxies.txt пуст. Подключение напрямую.")
+        logger.warning(f"[Proxy] Подключение выполняется по прямому маршруту.")
 
     client = Client(
         name=f"auth_{user_id}_{phone}", 
@@ -409,24 +412,24 @@ async def process_phone(message: types.Message, state: FSMContext):
     )
     
     try:
-        logger.info(f"[{phone}] Инициализация подключения...")
+        logger.info(f"[{phone}] Инициализация сетевого сокета...")
         await client.connect()
-        logger.info(f"[{phone}] Запрос кода авторизации...")
+        logger.info(f"[{phone}] Запрос токена проверки...")
         code_hash = await client.send_code(phone)
-        logger.info(f"[{phone}] Код успешно запрошен на сервере Telegram.")
+        logger.info(f"[{phone}] Ответ от сервера успешно обработан.")
         
         await state.update_data(phone=phone, phone_code_hash=code_hash.phone_code_hash)
         active_signups[message.chat.id] = client
 
-        text = f"📩 **КОД ПОДТВЕРЖДЕНИЯ**\n\nКод отправлен на `{phone}`.\nВведите полученный код:"
+        text = f"📩 **ВЕРИФИКАЦИОННЫЙ СЕРТИФИКАТ**\n\nЗапрос направлен на `{phone}`.\nВведите код авторизации сессии:"
         if menu_msg_id:
             await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=text, parse_mode="Markdown", reply_markup=get_back_inline())
         await state.set_state(AuthStates.waiting_for_code)
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка на этапе отправки кода: {e}")
+        logger.error(f"[{phone}] Исключение сетевого уровня: {e}")
         text, markup = get_main_menu(user_id)
         if menu_msg_id:
-            await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"❌ **Ошибка отправки кода:** {e}\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+            await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"❌ **Ошибка инициализации шлюза:** {e}\n\n" + text, parse_mode="Markdown", reply_markup=markup)
         
         try: await client.disconnect()
         except Exception: pass
@@ -459,10 +462,10 @@ async def process_code(message: types.Message, state: FSMContext):
         await db.add_account(user_id, phone, string_session)
 
         if menu_msg_id:
-            await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Юзербот {phone} успешно привязан!**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+            await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"✅ **Рабочее место {phone} успешно синхронизировано!**\n\n" + text, parse_mode="Markdown", reply_markup=markup)
         active_signups.pop(message.chat.id, None)
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка при входе: {e}")
+        logger.error(f"[{phone}] Ошибка валидации токена: {e}")
         if menu_msg_id:
             await bot.edit_message_text(chat_id=message.chat.id, message_id=menu_msg_id, text=f"❌ **Ошибка авторизации:** {e}\n\n" + text, parse_mode="Markdown", reply_markup=markup)
     finally:
@@ -479,7 +482,7 @@ async def start_mailing_handler(callback: types.CallbackQuery):
     settings = get_user_settings(user_id)
     
     if settings["is_running"]:
-        await callback.answer("Ваша рассылка уже активна!", show_alert=True)
+        await callback.answer("Сессия обработки процессов уже активна!", show_alert=True)
         return
 
     settings["is_running"] = True
@@ -497,7 +500,7 @@ async def stop_mailing_handler(callback: types.CallbackQuery):
     settings = get_user_settings(user_id)
     
     if not settings["is_running"]:
-        await callback.answer("Ваша рассылка не была запущена.", show_alert=True)
+        await callback.answer("Активные процессы не обнаружены.", show_alert=True)
         return
         
     settings["is_running"] = False
@@ -516,7 +519,7 @@ async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
         settings["is_running"] = False
         try:
             text, markup = get_main_menu(user_id)
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="⚠️ У вас нет подключенных аккаунтов!\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="⚠️ Подключенные шлюзы (РМ) отсутствуют!\n\n" + text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -574,7 +577,7 @@ async def send_messages_from_account(user_id: int, phone: str, session_str: str,
 
     try: await app.start()
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка старта клиента во время спама: {e}")
+        logger.error(f"[{phone}] Ошибка инициализации потока: {e}")
         return
 
     tasks = []
@@ -599,12 +602,12 @@ async def send_to_single_group(app, phone: str, group_url: str, text: str, enabl
             await asyncio.sleep(random.randint(2, 5))
 
         await app.send_message(chat.id, text)
-        logger.info(f"[{phone}] Успешно отправлено в {chat_peer}")
+        logger.info(f"[{phone}] Операция успешно выполнена для {chat_peer}")
 
     except FloodWait as e:
         await asyncio.sleep(e.value + 2)
     except Exception as e:
-        logger.error(f"[{phone}] Не удалось отправить сообщение в {group_url} -> {e}")
+        logger.error(f"[{phone}] Сбой передачи пакета данных в {group_url} -> {e}")
 
 
 # --- СТАРТ СТРУКТУРЫ ---
