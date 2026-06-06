@@ -8,13 +8,14 @@ logger = logging.getLogger("Database Module")
 async def init_db():
     """Инициализация базы данных и создание всех необходимых таблиц при старте бота"""
     async with aiosqlite.connect(DB_NAME) as db:
-        # Таблица подключенных аккаунтов (РМ)
+        # Таблица подключенных аккаунтов (РМ) с поддержкой флага активности is_active
         await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 user_id INTEGER,
                 phone TEXT PRIMARY KEY,
                 session_string TEXT,
-                spamblock_status TEXT DEFAULT 'Не проверялся'
+                spamblock_status TEXT DEFAULT 'Не проверялся',
+                is_active INTEGER DEFAULT 1
             )
         """)
         
@@ -45,20 +46,20 @@ async def init_db():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def add_account(user_id: int, phone: str, session_string: str):
-    """Добавляет новый аккаунт или обновляет сессию существующего"""
+    """Добавляет новый аккаунт или обновляет сессию существующего (по умолчанию активен)"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO accounts (user_id, phone, session_string) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO accounts (user_id, phone, session_string, is_active) VALUES (?, ?, ?, 1)",
             (user_id, phone, session_string)
         )
         await db.commit()
 
 
 async def get_accounts(user_id: int):
-    """Возвращает список всех аккаунтов пользователя со статусами спам-блока"""
+    """Возвращает список всех аккаунтов пользователя со статусами спам-блока и активности"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT phone, session_string, spamblock_status FROM accounts WHERE user_id = ?", 
+            "SELECT phone, session_string, spamblock_status, is_active FROM accounts WHERE user_id = ?", 
             (user_id,)
         ) as cursor:
             return await cursor.fetchall()
@@ -79,6 +80,21 @@ async def update_spamblock(phone: str, status: str):
             (status, phone)
         )
         await db.commit()
+
+
+async def toggle_account_status(phone: str, current_status: int) -> int:
+    """
+    Переключает статус активности аккаунта (1 - активен в рассылке, 0 - заглушен).
+    Возвращает новый установленный статус.
+    """
+    new_status = 0 if current_status == 1 else 1
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE accounts SET is_active = ? WHERE phone = ?", 
+            (new_status, phone)
+        )
+        await db.commit()
+    return new_status
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
