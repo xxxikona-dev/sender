@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("ОШИБКА: Переменная ... не найдена на хостинге!")
+    raise ValueError("ОШИБКА: Переменная окружения 'BOT_TOKEN' не найдена на хостинге!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -109,11 +109,9 @@ class SettingsStates(StatesGroup):
 # --- ИНТЕРФЕЙСНЫЕ КНОПКИ (КЛАВИАТУРЫ) ---
 def get_main_menu(user_id: int):
     settings = get_user_settings(user_id)
-    # Замаскированные статусы работы
     status = "🟢 АКТИВЕН" if settings["is_running"] else "🔴 ПРИОСТАНОВЛЕН"
     wave_limit = "Авто" if settings["max_waves"] == 0 else f"{settings['max_waves']}"
     
-    # Полностью нейтральный текст интерфейса ("Менеджер Проектов")
     text = (
         f"💼 **WORKSPACE MANAGER v2.4**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -124,7 +122,6 @@ def get_main_menu(user_id: int):
         f"Выберите необходимый модуль для настройки конфигурации:"
     )
     
-    # Кнопки делают то же самое, но называются как легальный софт
     buttons = [
         [
             InlineKeyboardButton(text="📱 Подключить шлюз (РМ)", callback_data="add_account"),
@@ -474,7 +471,7 @@ async def process_code(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-# --- УПРАВЛЕНИЕ РАССЫЛКОЙ ---
+# --- УПРАВЛЕНИЕ СЕССИЕЙ ---
 
 @dp.callback_query(F.data == "start_mailing")
 async def start_mailing_handler(callback: types.CallbackQuery):
@@ -509,7 +506,7 @@ async def stop_mailing_handler(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# --- ЯДРО РАССЫЛКИ С ИСПОЛЬЗОВАНИЕМ ПРОКСИ ---
+# --- ЯДРО ОБРАБОТКИ С ОБРАБОТКОЙ ИСКЛЮЧЕНИЙ СЕТИ ---
 
 async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
     settings = get_user_settings(user_id)
@@ -543,8 +540,12 @@ async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
         workers = []
         for phone, session_str in accounts:
             workers.append(send_messages_from_account(user_id, phone, session_str, groups))
+            # Плавный запуск: добавляем задержку 1.5 секунды между стартом разных аккаунтов,
+            # чтобы предотвратить мгновенный разрыв соединений из-за сетевого шума
+            await asyncio.sleep(1.5)
 
-        await asyncio.gather(*workers)
+        if workers:
+            await asyncio.gather(*workers)
 
         if not settings["is_running"]:
             break
@@ -575,17 +576,23 @@ async def send_messages_from_account(user_id: int, phone: str, session_str: str,
     )
     settings = get_user_settings(user_id)
 
-    try: await app.start()
+    try: 
+        await app.start()
+        tasks = []
+        for group_url in groups:
+            tasks.append(send_to_single_group(app, phone, group_url, settings["text"], settings["enable_typing"]))
+
+        await asyncio.gather(*tasks)
+    except OSError:
+        # Ловим Connection lost / ConnectionResetError и не даем скрипту упасть
+        logger.error(f"[{phone}] Сетевое исключение: Соединение с сервером Telegram потеряно.")
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка инициализации потока: {e}")
-        return
-
-    tasks = []
-    for group_url in groups:
-        tasks.append(send_to_single_group(app, phone, group_url, settings["text"], settings["enable_typing"]))
-
-    await asyncio.gather(*tasks)
-    await app.stop()
+        logger.error(f"[{phone}] Непредвиденное исключение в потоке воркера: {e}")
+    finally:
+        try: 
+            await app.stop()
+        except Exception: 
+            pass # Если сессия уже закрыта сервером, метод stop() вызовет ошибку, просто игнорируем её
 
 
 async def send_to_single_group(app, phone: str, group_url: str, text: str, enable_typing: bool):
@@ -606,6 +613,8 @@ async def send_to_single_group(app, phone: str, group_url: str, text: str, enabl
 
     except FloodWait as e:
         await asyncio.sleep(e.value + 2)
+    except OSError:
+        logger.error(f"[{phone}] Соединение разорвано во время отправки пакета в {group_url}")
     except Exception as e:
         logger.error(f"[{phone}] Сбой передачи пакета данных в {group_url} -> {e}")
 
