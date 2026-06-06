@@ -11,11 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
 
 from pyrogram import Client
-from pyrogram.enums import ChatAction
-from pyrogram.errors import (
-    FloodWait,
-    PeerIdInvalid,
-)
+from pyrogram.errors import FloodWait
 
 import config
 import database as db
@@ -113,7 +109,7 @@ def get_main_menu(user_id: int):
     wave_limit = "Авто" if settings["max_waves"] == 0 else f"{settings['max_waves']}"
     
     text = (
-        f"💼 **WORKSPACE MANAGER v3.5**\n"
+        f"💼 **WORKSPACE MANAGER v3.6**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"Статус процессов:  {status}\n"
         f"Текущий цикл задач:   {settings['current_wave']} из {wave_limit}\n"
@@ -189,9 +185,10 @@ async def get_accounts_keyboard(user_id: int):
     if not accounts:
         text = "📱 **УПРАВЛЕНИЕ РАБОЧИМИ МЕСТАМИ**\n\n❌ Нет подключенных аккаунтов шлюзов."
     else:
-        text = "📱 **УПРАВЛЕНИЕ РАБОЧИМИ МЕСТАМИ**\n\nСписок ваших активных шлюзов и их статусы спамблока:"
-        for phone, _, status in accounts:
-            text += f"\n• `{phone}` — *{status}*"
+        text = "📱 **УПРАВЛЕНИЕ РАБОЧИМИ МЕСТАМИ**\n\nСписок ваших активных шлюзов и их статусы спамблока:\n"
+        for phone, _, status, is_active in accounts:
+            active_icon = "🟢" if is_active == 1 else "💤"
+            text += f"\n{active_icon} `{phone}` — *{status}*"
             buttons.append([InlineKeyboardButton(text=f"⚙️ Управление {phone}", callback_data=f"act_{phone}")])
             
     buttons.append([InlineKeyboardButton(text="📱 Подключить новое РМ", callback_data="add_account")])
@@ -244,13 +241,40 @@ async def manage_accounts_cmd(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("act_"))
 async def individual_account_manage(callback: types.CallbackQuery):
     phone = callback.data.replace("act_", "")
-    text = f"⚙️ **Управление аккаунтом** `{phone}`\n\nВы можете принудительно деавторизовать данную сессию. Она сотрется из бота и полностью закроется в Telegram."
+    accounts = await db.get_accounts(callback.from_user.id)
+    
+    # Находим статус активности текущего аккаунта (по умолчанию 1 - активен)
+    is_active = next((is_active for p, s, st, is_active in accounts if p == phone), 1)
+    toggle_text = "🔈 Включить в рассылку" if is_active == 0 else "🔇 Заглушить аккаунт"
+    status_label = "Работает (Активен)" if is_active == 1 else "На паузе (Заглушен)"
+
+    text = (
+        f"⚙️ **Управление аккаунтом** `{phone}`\n\n"
+        f"Текущее состояние: **{status_label}**\n\n"
+        f"Вы можете временно заглушить отправку с этого аккаунта или полностью разорвать сессию с удалением из бота."
+    )
     buttons = [
-        [InlineKeyboardButton(text="🛑 Завершить эту сессию", callback_data=f"kill_{phone}")],
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"toggle_{phone}")],
+        [InlineKeyboardButton(text="🛑 Удалить сессию (Log Out)", callback_data=f"kill_{phone}")],
         [InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="manage_accounts")]
     ]
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("toggle_"))
+async def toggle_account_handler(callback: types.CallbackQuery):
+    phone = callback.data.replace("toggle_", "")
+    accounts = await db.get_accounts(callback.from_user.id)
+    
+    current_status = next((is_active for p, s, st, is_active in accounts if p == phone), 1)
+    new_status = await db.toggle_account_status(phone, current_status)
+    
+    status_msg = "включен в поток" if new_status == 1 else "успешно заглушен"
+    await callback.answer(f"Аккаунт {phone} {status_msg}!", show_alert=False)
+    
+    # Перерисовываем это же меню управления с новыми кнопками
+    await individual_account_manage(callback)
 
 
 @dp.callback_query(F.data.startswith("kill_"))
@@ -258,7 +282,7 @@ async def kill_single_session_handler(callback: types.CallbackQuery):
     phone = callback.data.replace("kill_", "")
     accounts = await db.get_accounts(callback.from_user.id)
     
-    session_str = next((s for p, s, _ in accounts if p == phone), None)
+    session_str = next((s for p, s, _, _ in accounts if p == phone), None)
     if session_str:
         await callback.message.edit_text(f"⏳ Разрываем соединение и уничтожаем сессию `{phone}`...", parse_mode="Markdown")
         await worker.terminate_session(phone, session_str)
@@ -277,7 +301,7 @@ async def kill_all_sessions_handler(callback: types.CallbackQuery):
         return
         
     await callback.message.edit_text("⏳ Глобальный сброс. Уничтожаем все подключенные сессии...", parse_mode="Markdown")
-    for phone, session_str, _ in accounts:
+    for phone, session_str, _, _ in accounts:
         await worker.terminate_session(phone, session_str)
         
     text, markup = await get_accounts_keyboard(callback.from_user.id)
@@ -296,7 +320,7 @@ async def check_all_spam_handler(callback: types.CallbackQuery):
         return
         
     await callback.message.edit_text("🛡 **Сканирование инфраструктуры...**\n\nВоркер поочередно заходит к @Spambot. Пожалуйста, подождите.", parse_mode="Markdown")
-    for phone, session_str, _ in accounts:
+    for phone, session_str, _, _ in accounts:
         await worker.check_account_spamblock(phone, session_str)
         await asyncio.sleep(1) 
         
@@ -432,7 +456,7 @@ async def process_new_text(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- УПРАВЛЕНИЕ БАЗОЙ ГРУПП (ВЫГРУЗКА .TXT ВКЛЮЧЕНА) ---
+# --- УПРАВЛЕНИЕ БАЗОЙ ГРУПП ---
 
 @dp.callback_query(F.data == "manage_groups")
 async def manage_groups_cmd(callback: types.CallbackQuery):
@@ -584,7 +608,7 @@ async def process_numeric_settings(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- ВЫВОД СКВОЗНОЙ СТАТИСТИКИ (ЧАС / ДЕНЬ / НЕДЕЛЯ / МЕСЯЦ) ---
+# --- ВЫВОД СКВОЗНОЙ СТАТИСТИКИ ---
 
 @dp.callback_query(F.data == "view_statistics")
 async def view_stats_handler(callback: types.CallbackQuery):
@@ -644,17 +668,19 @@ async def stop_mailing_handler(callback: types.CallbackQuery):
 
 async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
     settings = get_user_settings(user_id)
-    accounts = await db.get_accounts(user_id)
     
-    if not accounts:
-        settings["is_running"] = False
-        try:
-            text, markup = get_main_menu(user_id)
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="⚠️ Подключенные шлюзы (РМ) отсутствуют!\n\n" + text, parse_mode="Markdown", reply_markup=markup)
-        except Exception: pass
-        return
-
     while settings["is_running"]:
+        # Каждый цикл запрашиваем актуальный список аккаунтов со статусами активности
+        accounts = await db.get_accounts(user_id)
+        
+        if not accounts:
+            settings["is_running"] = False
+            try:
+                text, markup = get_main_menu(user_id)
+                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="⚠️ Подключенные шлюзы (РМ) отсутствуют!\n\n" + text, parse_mode="Markdown", reply_markup=markup)
+            except Exception: pass
+            return
+
         if settings["max_waves"] > 0 and settings["current_wave"] >= settings["max_waves"]:
             settings["is_running"] = False
             break
@@ -672,8 +698,12 @@ async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
             continue
 
         workers_tasks = []
-        for phone, session_str, _ in accounts:
-            workers_tasks.append(send_messages_from_account(user_id, phone, session_str, groups))
+        for phone, session_str, spamblock, is_active in accounts:
+            # ЗАПУСКАЕМ ВОРКЕР ТОЛЬКО ЕСЛИ АККАУНТ НЕ ЗАГЛУШЕН (is_active == 1)
+            if is_active == 1:
+                workers_tasks.append(send_messages_from_account(user_id, phone, session_str, groups))
+            else:
+                logger.info(f"[{phone}] Пропуск: Аккаунт принудительно переведен в спящий режим (заглушен).")
             await asyncio.sleep(1.5)  # Плавный запуск сокетов
 
         if workers_tasks:
@@ -723,7 +753,7 @@ async def send_messages_from_account(user_id: int, phone: str, session_str: str,
         except Exception: pass
 
 
-# --- ЗАПУСК ПОЛЛИНГА ---
+# --- ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ ---
 async def main():
     await db.init_db()
     await dp.start_polling(bot)
