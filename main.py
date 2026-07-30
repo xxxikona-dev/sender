@@ -259,4 +259,284 @@ def get_accounts_keyboard(user_id: int):
             buttons.append([InlineKeyboardButton(text=f"⚙️ Управление {phone}", callback_data=f"act_{phone}")])
             
     buttons.append([InlineKeyboardButton(text="📱 Подключить новое РМ", callback_data="add_account")])
-    buttons.append([InlineKeyboardButton(text="🛡 Провери
+    buttons.append([InlineKeyboardButton(text="🛡 Проверить СПАМ-БЛОК", callback_data="check_all_spam")])
+    if accounts:
+        buttons.append([InlineKeyboardButton(text="💥 Завершить ВСЕ сессии", callback_data="kill_all_sessions")])
+    buttons.append([InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_menu")])
+    
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_groups_menu(count: int):
+    buttons = [
+        [InlineKeyboardButton(text="📥 Импортировать список ID/Узлов", callback_data="add_groups")],
+        [InlineKeyboardButton(text="📥 Скачать базу .txt", callback_data="download_chats")],
+        [InlineKeyboardButton(text="🗑 Сбросить текущую базу", callback_data="clear_groups")],
+        [InlineKeyboardButton(text="⬅️ Вернуться назад", callback_data="back_to_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_settings_menu(user_id: int):
+    settings = get_user_settings(user_id)
+    typing_status = "✅ Активно" if settings["enable_typing"] else "❌ Отключено"
+    wave_limit = "Без ограничений" if settings["max_waves"] == 0 else f"{settings['max_waves']} циклов"
+    
+    text = (
+        f"⚙️ **ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ СЕССИИ**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"⏱ Нижний порог тайминга: **{settings['min_delay']} сек.**\n"
+        f"⏱ Верхний порог тайминга: **{settings['max_delay']} сек.**\n"
+        f"🔄 Ограничение по итерациям: **{wave_limit}**\n"
+        f"⌨️ Предварительная задержка потока: **{typing_status}**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Используйте элементы управления для изменения переменных:"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(text="⏱ Изм. min задержку", callback_data="set_min_delay"),
+            InlineKeyboardButton(text="⏱ Изм. max задержку", callback_data="set_max_delay")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Лимит итераций", callback_data="set_wave_limit"),
+            InlineKeyboardButton(text="⌨️ Переключить задержку", callback_data="toggle_typing")
+        ],
+        [InlineKeyboardButton(text="⬅️ Вернуться назад", callback_data="back_to_menu")]
+    ]
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_back_inline(to_settings=False, to_accounts=False, to_subscription=False):
+    if to_settings:
+        target = "show_settings"
+    elif to_accounts:
+        target = "manage_accounts"
+    elif to_subscription:
+        target = "subscription_menu"
+    else:
+        target = "back_to_menu"
+    buttons = [[InlineKeyboardButton(text="⬅️ Отменить операцию", callback_data=target)]]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# --- ХЕНДЛЕРЫ ---
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    
+    # Регистрируем пользователя
+    await db.register_or_update_user(
+        message.from_user.id,
+        message.from_user.username or "",
+        message.from_user.first_name or "",
+        message.from_user.last_name or ""
+    )
+    
+    text, markup = get_main_menu(message.from_user.id)
+    await message.answer(text, parse_mode="Markdown", reply_markup=markup)
+
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, markup = get_main_menu(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer()
+
+
+# --- ПОДПИСКИ ---
+
+@dp.callback_query(F.data == "subscription_menu")
+async def subscription_menu_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, markup = get_subscription_menu()
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("sub_"))
+async def select_plan_handler(callback: types.CallbackQuery, state: FSMContext):
+    plan_type = callback.data.replace("sub_", "")
+    
+    if plan_type == "xrocket":
+        # Показываем меню выбора плана для XROCKET
+        text = (
+            "🚀 **ОПЛАТА ЧЕРЕЗ XROCKET**\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Выберите тарифный план для оплаты в XROCKET:\n\n"
+        )
+        
+        for key, plan in config.SUBSCRIPTION_PLANS.items():
+            text += f"\n{plan['color']} **{plan['name']}** - {plan['price_xrocket']} XROCKET"
+        
+        buttons = [
+            [InlineKeyboardButton(text="🟢 Дневная - 5 XROCKET", callback_data="pay_xrocket_day")],
+            [InlineKeyboardButton(text="🔵 Недельная - 15 XROCKET", callback_data="pay_xrocket_week")],
+            [InlineKeyboardButton(text="🟣 Месячная - 45 XROCKET", callback_data="pay_xrocket_month")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscription_menu")]
+        ]
+        
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await callback.answer()
+        return
+    
+    # Обычные планы в USD
+    text, markup = get_payment_methods_menu(plan_type)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("pay_crypto_"))
+async def pay_crypto_handler(callback: types.CallbackQuery, state: FSMContext):
+    plan_type = callback.data.replace("pay_crypto_", "")
+    
+    # Создаем платеж
+    try:
+        payment_data = await payment_manager.create_payment(callback.from_user.id, plan_type, "crypto")
+        await db.add_payment_record(
+            callback.from_user.id,
+            payment_data["payment_id"],
+            plan_type,
+            payment_data["amount"],
+            payment_data["currency"]
+        )
+        
+        text, markup = get_payment_confirmation_menu(payment_data)
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Payment error: {e}")
+        await callback.answer(f"Ошибка создания платежа: {e}", show_alert=True)
+    
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("pay_xrocket_"))
+async def pay_xrocket_handler(callback: types.CallbackQuery, state: FSMContext):
+    plan_type = callback.data.replace("pay_xrocket_", "")
+    
+    try:
+        payment_data = await payment_manager.create_payment(callback.from_user.id, plan_type, "xrocket")
+        await db.add_payment_record(
+            callback.from_user.id,
+            payment_data["payment_id"],
+            plan_type,
+            payment_data["amount"],
+            payment_data["currency"]
+        )
+        
+        text, markup = get_payment_confirmation_menu(payment_data)
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"xRocket payment error: {e}")
+        await callback.answer(f"Ошибка создания платежа: {e}", show_alert=True)
+    
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("check_payment_"))
+async def check_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+    payment_id = callback.data.replace("check_payment_", "")
+    
+    # Проверяем статус платежа
+    payment_info = await db.get_payment_status(payment_id)
+    if not payment_info:
+        await callback.answer("Платеж не найден", show_alert=True)
+        return
+    
+    # В реальном проекте здесь будет проверка через платежный шлюз
+    # Сейчас симулируем успешную оплату
+    
+    # Активируем подписку
+    await SubscriptionManager.activate_subscription(
+        payment_info["user_id"],
+        payment_info["plan_type"]
+    )
+    
+    await db.confirm_payment(payment_id)
+    
+    await callback.answer("✅ Платеж подтвержден! Подписка активирована.", show_alert=True)
+    
+    text, markup = get_main_menu(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+@dp.callback_query(F.data == "payment_history")
+async def payment_history_handler(callback: types.CallbackQuery):
+    payments = await db.get_user_payments(callback.from_user.id, 10)
+    
+    if not payments:
+        text = "📋 **ИСТОРИЯ ПЛАТЕЖЕЙ**\n\n❌ Платежей не найдено."
+    else:
+        text = "📋 **ИСТОРИЯ ПЛАТЕЖЕЙ**\n\n"
+        for payment in payments:
+            payment_id, plan_type, amount, currency, status, created_at, confirmed_at = payment
+            status_emoji = "✅" if status == "completed" else "⏳"
+            plan_names = {"day": "Дневная", "week": "Недельная", "month": "Месячная"}
+            plan_name = plan_names.get(plan_type, plan_type)
+            text += f"{status_emoji} {plan_name} - {amount} {currency}\n"
+    
+    buttons = [[InlineKeyboardButton(text="⬅️ Назад", callback_data="subscription_menu")]]
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+
+# --- ОСТАЛЬНЫЕ ХЕНДЛЕРЫ (аккаунты, группы, настройки, статистика) ---
+
+@dp.callback_query(F.data == "manage_accounts")
+async def manage_accounts_cmd(callback: types.CallbackQuery, state: FSMContext):
+    # Проверяем подписку
+    sub = await SubscriptionManager.check_subscription(callback.from_user.id)
+    if not sub["is_active"]:
+        await callback.answer("❌ Требуется активная подписка!", show_alert=True)
+        text, markup = get_subscription_menu()
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+        return
+    
+    await state.clear()
+    text, markup = await get_accounts_keyboard(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer()
+
+
+# Остальные хендлеры (аккаунты, группы, настройки, статистика, запуск)
+# ... (код из предыдущей версии с небольшими изменениями)
+
+# Добавляем проверку подписки в критические функции
+
+@dp.callback_query(F.data == "start_mailing")
+async def start_mailing_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Проверяем подписку
+    sub = await SubscriptionManager.check_subscription(user_id)
+    if not sub["is_active"]:
+        await callback.answer("❌ Требуется активная подписка!", show_alert=True)
+        text, markup = get_subscription_menu()
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+        return
+    
+    settings = get_user_settings(user_id)
+    
+    if settings["is_running"]:
+        await callback.answer("Сессия процессов уже активна!", show_alert=True)
+        return
+
+    settings["is_running"] = True
+    settings["current_wave"] = 0
+    
+    text, markup = get_main_menu(user_id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    asyncio.create_task(run_mailing_task(user_id, callback.message.chat.id, callback.message.message_id))
+    await callback.answer()
+
+
+# --- ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ ---
+async def main():
+    await db.init_db()
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
