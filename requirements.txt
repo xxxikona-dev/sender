@@ -1,4 +1,7 @@
+# requirements.txt (обновленный)
 aiogram==3.18.0
 pyrofork
 tgcrypto==1.2.5
 aiosqlite==0.20.0
+cryptography==41.0.7
+python-dotenv==1.0.0
