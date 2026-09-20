@@ -1,4 +1,4 @@
-# main.py (без подписок)
+# main.py (полный, без подписок, с фиксом asyncio.run)
 import asyncio
 import logging
 import random
@@ -33,9 +33,6 @@ dp = Dispatcher(storage=MemoryStorage())
 
 # Словари для временного хранения
 active_signups = {}
-users_mailing_configs = {}
-
-# Глобальное хранилище индивидуальных настроек пользователей
 users_mailing_configs = {}
 
 
@@ -141,8 +138,8 @@ def get_main_menu(user_id: int):
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_accounts_keyboard(user_id: int):
-    accounts = asyncio.run(db.get_accounts(user_id))
+async def get_accounts_keyboard(user_id: int):
+    accounts = await db.get_accounts(user_id)
     buttons = []
 
     if not accounts:
@@ -220,7 +217,6 @@ def get_back_inline(to_settings=False, to_accounts=False):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
 
-    # Регистрируем пользователя
     await db.register_or_update_user(
         message.from_user.id,
         message.from_user.username or "",
@@ -243,7 +239,7 @@ async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext)
 @dp.callback_query(F.data == "manage_accounts")
 async def manage_accounts_cmd(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    text, markup = get_accounts_keyboard(callback.from_user.id)
+    text, markup = await get_accounts_keyboard(callback.from_user.id)
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
     await callback.answer()
 
@@ -264,6 +260,162 @@ async def start_mailing_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
     asyncio.create_task(run_mailing_task(user_id, callback.message.chat.id, callback.message.message_id))
     await callback.answer()
+
+
+# --- ЗАГЛУШКИ ДЛЯ ХЕНДЛЕРОВ, КОТОРЫЕ ЕЩЁ НЕ РЕАЛИЗОВАНЫ ---
+# Они нужны, чтобы бот не падал с "no handler for callback" и чтобы
+# кнопки главного меню не висели без ответа.
+
+@dp.callback_query(F.data == "change_text")
+async def change_text_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Модуль 'Скрипт задачи' пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "manage_groups")
+async def manage_groups_stub(callback: types.CallbackQuery, state: FSMContext):
+    groups = await db.get_groups(callback.from_user.id)
+    text = (
+        f"👥 **БАЗА АДРЕСАТОВ**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Сохранено узлов: **{len(groups)}**\n\n"
+        f"Модуль импорта/экспорта будет добавлен позже."
+    )
+    await callback.message.edit_text(
+        text, parse_mode="Markdown",
+        reply_markup=get_groups_menu(len(groups))
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "show_settings")
+async def show_settings_stub(callback: types.CallbackQuery, state: FSMContext):
+    text, markup = get_settings_menu(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "view_statistics")
+async def view_statistics_stub(callback: types.CallbackQuery):
+    stats = await db.get_stats(callback.from_user.id)
+    text = (
+        f"📊 **СТАТИСТИКА ОТПРАВОК**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"⏱ За час: **{stats['hour']}**\n"
+        f"📅 За сутки: **{stats['day']}**\n"
+        f"🗓 За неделю: **{stats['week']}**\n"
+        f"📆 За месяц: **{stats['month']}**\n"
+        f"♾ Всего: **{stats['all']}**\n"
+    )
+    buttons = [[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")]]
+    await callback.message.edit_text(
+        text, parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "stop_mailing")
+async def stop_mailing_stub(callback: types.CallbackQuery):
+    settings = get_user_settings(callback.from_user.id)
+    settings["is_running"] = False
+    text, markup = get_main_menu(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer("Сессия остановлена.")
+
+
+@dp.callback_query(F.data == "add_account")
+async def add_account_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Модуль добавления аккаунтов пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "check_all_spam")
+async def check_all_spam_stub(callback: types.CallbackQuery):
+    await callback.answer("Модуль проверки СПАМ-БЛОКА пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "kill_all_sessions")
+async def kill_all_sessions_stub(callback: types.CallbackQuery):
+    await callback.answer("Модуль завершения всех сессий пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("act_"))
+async def act_account_stub(callback: types.CallbackQuery):
+    phone = callback.data.replace("act_", "")
+    await callback.answer(f"Управление {phone} пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "add_groups")
+async def add_groups_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Модуль импорта узлов пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "download_chats")
+async def download_chats_stub(callback: types.CallbackQuery):
+    groups = await db.get_groups(callback.from_user.id)
+    if not groups:
+        await callback.answer("База пуста.", show_alert=True)
+        return
+    data = "\n".join(groups).encode("utf-8")
+    file = BufferedInputFile(data, filename="groups.txt")
+    await callback.message.answer_document(file, caption=f"📥 База узлов ({len(groups)} шт.)")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "clear_groups")
+async def clear_groups_stub(callback: types.CallbackQuery):
+    await db.clear_groups(callback.from_user.id)
+    await callback.answer("База узлов очищена.", show_alert=True)
+    groups = await db.get_groups(callback.from_user.id)
+    text = f"👥 **БАЗА АДРЕСАТОВ**\n\nСохранено узлов: **{len(groups)}**"
+    await callback.message.edit_text(
+        text, parse_mode="Markdown",
+        reply_markup=get_groups_menu(len(groups))
+    )
+
+
+@dp.callback_query(F.data == "set_min_delay")
+async def set_min_delay_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Изменение min задержки пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "set_max_delay")
+async def set_max_delay_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Изменение max задержки пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "set_wave_limit")
+async def set_wave_limit_stub(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Изменение лимита итераций пока в разработке.", show_alert=True)
+
+
+@dp.callback_query(F.data == "toggle_typing")
+async def toggle_typing_stub(callback: types.CallbackQuery):
+    settings = get_user_settings(callback.from_user.id)
+    settings["enable_typing"] = not settings["enable_typing"]
+    text, markup = get_settings_menu(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await callback.answer("Переключено.")
+
+
+# --- ФОНОВАЯ ЗАДАЧА РАССЫЛКИ (заглушка, чтобы не падало) ---
+async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
+    """
+    Здесь должна быть твоя реальная логика рассылки.
+    Сейчас — просто безопасная заглушка, чтобы не валить бота.
+    """
+    try:
+        settings = get_user_settings(user_id)
+        while settings["is_running"]:
+            settings["current_wave"] += 1
+            # TODO: здесь вызвать worker.send_to_group(...) по аккаунтам и группам
+            await asyncio.sleep(random.randint(settings["min_delay"], settings["max_delay"]))
+
+            if settings["max_waves"] and settings["current_wave"] >= settings["max_waves"]:
+                settings["is_running"] = False
+                break
+    except Exception as e:
+        logger.error(f"[Mailing] Ошибка в фоновой задаче: {e}")
+        settings["is_running"] = False
 
 
 # --- ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ ---
