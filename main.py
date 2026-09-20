@@ -1,4 +1,4 @@
-# main.py (полный, без подписок, с фиксом asyncio.run)
+# main.py (полный, без подписок, с рабочим добавлением аккаунтов)
 import asyncio
 import logging
 import random
@@ -13,7 +13,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
 
 from pyrogram import Client
-from pyrogram.errors import FloodWait
+from pyrogram.errors import (
+    SessionPasswordNeeded,
+    PhoneCodeInvalid,
+    PhoneCodeExpired,
+    PhoneNumberInvalid,
+    PasswordHashInvalid,
+    FloodWait
+)
 
 import config
 import database as db
@@ -34,6 +41,10 @@ dp = Dispatcher(storage=MemoryStorage())
 # Словари для временного хранения
 active_signups = {}
 users_mailing_configs = {}
+
+# Хранилище активных Pyrogram-клиентов во время авторизации
+# { user_id: {"client": Client, "phone": str, "phone_code_hash": str} }
+pending_auth_clients: dict[int, dict] = {}
 
 
 def get_user_settings(user_id: int) -> dict:
@@ -86,6 +97,7 @@ def get_random_proxy_config() -> dict | None:
 class AuthStates(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
+    waiting_for_password = State()
 
 
 class GroupStates(StatesGroup):
@@ -211,10 +223,55 @@ def get_back_inline(to_settings=False, to_accounts=False):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ АВТОРИЗАЦИИ ---
+
+async def cleanup_pending_auth(user_id: int):
+    """Корректно закрывает временный Pyrogram-клиент"""
+    auth = pending_auth_clients.pop(user_id, None)
+    if auth:
+        try:
+            await auth["client"].disconnect()
+        except Exception:
+            pass
+
+
+async def finalize_auth(user_id: int, message: types.Message, state: FSMContext):
+    """Сохраняет сессию в БД и завершает авторизацию"""
+    auth = pending_auth_clients.get(user_id)
+    if not auth:
+        await message.answer("❌ Сессия потеряна.")
+        await state.clear()
+        return
+
+    client: Client = auth["client"]
+    phone = auth["phone"]
+
+    try:
+        session_string = await client.export_session_string()
+    except Exception as e:
+        logger.error(f"[Auth] Не удалось экспортировать сессию: {e}")
+        await message.answer(f"❌ Ошибка экспорта сессии: `{e}`", parse_mode="Markdown")
+        await cleanup_pending_auth(user_id)
+        await state.clear()
+        return
+
+    await db.add_account(user_id, phone, session_string)
+    await cleanup_pending_auth(user_id)
+    await state.clear()
+
+    text, markup = await get_accounts_keyboard(user_id)
+    await message.answer(
+        f"✅ Аккаунт `{phone}` успешно подключён!\n\n" + text,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+
 # --- ХЕНДЛЕРЫ ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    await cleanup_pending_auth(message.from_user.id)
     await state.clear()
 
     await db.register_or_update_user(
@@ -230,6 +287,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext):
+    await cleanup_pending_auth(callback.from_user.id)
     await state.clear()
     text, markup = get_main_menu(callback.from_user.id)
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -238,6 +296,7 @@ async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.callback_query(F.data == "manage_accounts")
 async def manage_accounts_cmd(callback: types.CallbackQuery, state: FSMContext):
+    await cleanup_pending_auth(callback.from_user.id)
     await state.clear()
     text, markup = await get_accounts_keyboard(callback.from_user.id)
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -262,9 +321,150 @@ async def start_mailing_handler(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# --- ЗАГЛУШКИ ДЛЯ ХЕНДЛЕРОВ, КОТОРЫЕ ЕЩЁ НЕ РЕАЛИЗОВАНЫ ---
-# Они нужны, чтобы бот не падал с "no handler for callback" и чтобы
-# кнопки главного меню не висели без ответа.
+# --- ДОБАВЛЕНИЕ АККАУНТА (АВТОРИЗАЦИЯ) ---
+
+@dp.callback_query(F.data == "add_account")
+async def add_account_start(callback: types.CallbackQuery, state: FSMContext):
+    await cleanup_pending_auth(callback.from_user.id)
+    await state.clear()
+    await state.set_state(AuthStates.waiting_for_phone)
+
+    text = (
+        "📱 **ПОДКЛЮЧЕНИЕ НОВОГО РМ**\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Отправьте номер телефона в международном формате:\n"
+        "Пример: `+79991234567`\n\n"
+        "⚠️ На этот номер придёт код подтверждения от Telegram."
+    )
+    await callback.message.edit_text(
+        text, parse_mode="Markdown",
+        reply_markup=get_back_inline(to_accounts=True)
+    )
+    await callback.answer()
+
+
+@dp.message(AuthStates.waiting_for_phone)
+async def process_phone(message: types.Message, state: FSMContext):
+    phone = message.text.strip().replace(" ", "").replace("-", "")
+
+    if not phone.startswith("+") or not phone[1:].isdigit():
+        await message.answer(
+            "❌ Неверный формат. Отправьте номер в формате `+79991234567`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    await message.answer("⏳ Отправляем запрос к Telegram...")
+
+    try:
+        client = Client(
+            name=f"auth_{message.from_user.id}_{int(time.time())}",
+            api_id=config.API_ID,
+            api_hash=config.API_HASH,
+            in_memory=True,
+            phone_number=phone
+        )
+        await client.connect()
+
+        sent = await client.send_code(phone)
+
+        pending_auth_clients[message.from_user.id] = {
+            "client": client,
+            "phone": phone,
+            "phone_code_hash": sent.phone_code_hash
+        }
+
+        await state.set_state(AuthStates.waiting_for_code)
+        await message.answer(
+            f"📩 Код отправлен на `{phone}`.\n\n"
+            f"Отправьте код **с пробелами или без**, например: `1 2 3 4 5` или `12345`.",
+            parse_mode="Markdown",
+            reply_markup=get_back_inline(to_accounts=True)
+        )
+
+    except PhoneNumberInvalid:
+        await message.answer("❌ Telegram отклонил номер. Проверьте формат.")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+    except FloodWait as e:
+        await message.answer(f"⏳ FloodWait: подождите {e.value} сек.")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+    except Exception as e:
+        logger.error(f"[Auth] Ошибка отправки кода: {e}")
+        await message.answer(f"❌ Ошибка: `{e}`", parse_mode="Markdown")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+
+
+@dp.message(AuthStates.waiting_for_code)
+async def process_code(message: types.Message, state: FSMContext):
+    auth = pending_auth_clients.get(message.from_user.id)
+    if not auth:
+        await message.answer("❌ Сессия авторизации потеряна. Начните заново.")
+        await state.clear()
+        return
+
+    code = message.text.strip().replace(" ", "")
+
+    try:
+        await auth["client"].sign_in(
+            phone_number=auth["phone"],
+            phone_code_hash=auth["phone_code_hash"],
+            phone_code=code
+        )
+    except SessionPasswordNeeded:
+        await state.set_state(AuthStates.waiting_for_password)
+        await message.answer(
+            "🔐 На аккаунте включена двухфакторная аутентификация.\n"
+            "Отправьте пароль (2FA):",
+            reply_markup=get_back_inline(to_accounts=True)
+        )
+        return
+    except PhoneCodeInvalid:
+        await message.answer("❌ Неверный код. Попробуйте снова.")
+        return
+    except PhoneCodeExpired:
+        await message.answer("❌ Код истёк. Начните заново.")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+        return
+    except Exception as e:
+        logger.error(f"[Auth] Ошибка sign_in: {e}")
+        await message.answer(f"❌ Ошибка: `{e}`", parse_mode="Markdown")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+        return
+
+    await finalize_auth(message.from_user.id, message, state)
+
+
+@dp.message(AuthStates.waiting_for_password)
+async def process_password(message: types.Message, state: FSMContext):
+    auth = pending_auth_clients.get(message.from_user.id)
+    if not auth:
+        await message.answer("❌ Сессия авторизации потеряна. Начните заново.")
+        await state.clear()
+        return
+
+    password = message.text.strip()
+
+    try:
+        await auth["client"].check_password(password)
+    except PasswordHashInvalid:
+        await message.answer("❌ Неверный пароль. Попробуйте снова.")
+        return
+    except Exception as e:
+        logger.error(f"[Auth] Ошибка 2FA: {e}")
+        await message.answer(f"❌ Ошибка: `{e}`", parse_mode="Markdown")
+        await cleanup_pending_auth(message.from_user.id)
+        await state.clear()
+        return
+
+    await finalize_auth(message.from_user.id, message, state)
+
+
+# --- ЗАГЛУШКИ ДЛЯ ОСТАЛЬНЫХ КНОПОК ---
 
 @dp.callback_query(F.data == "change_text")
 async def change_text_stub(callback: types.CallbackQuery, state: FSMContext):
@@ -321,11 +521,6 @@ async def stop_mailing_stub(callback: types.CallbackQuery):
     text, markup = get_main_menu(callback.from_user.id)
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
     await callback.answer("Сессия остановлена.")
-
-
-@dp.callback_query(F.data == "add_account")
-async def add_account_stub(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer("Модуль добавления аккаунтов пока в разработке.", show_alert=True)
 
 
 @dp.callback_query(F.data == "check_all_spam")
@@ -397,12 +592,8 @@ async def toggle_typing_stub(callback: types.CallbackQuery):
     await callback.answer("Переключено.")
 
 
-# --- ФОНОВАЯ ЗАДАЧА РАССЫЛКИ (заглушка, чтобы не падало) ---
+# --- ФОНОВАЯ ЗАДАЧА РАССЫЛКИ (заглушка) ---
 async def run_mailing_task(user_id: int, chat_id: int, message_id: int):
-    """
-    Здесь должна быть твоя реальная логика рассылки.
-    Сейчас — просто безопасная заглушка, чтобы не валить бота.
-    """
     try:
         settings = get_user_settings(user_id)
         while settings["is_running"]:
