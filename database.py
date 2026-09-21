@@ -18,7 +18,6 @@ async def init_db():
                 registered_at INTEGER DEFAULT 0
             )
         """)
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 user_id INTEGER,
@@ -28,7 +27,6 @@ async def init_db():
                 is_active INTEGER DEFAULT 1
             )
         """)
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS groups (
                 user_id INTEGER,
@@ -36,7 +34,6 @@ async def init_db():
                 PRIMARY KEY (user_id, group_url)
             )
         """)
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS statistics (
                 user_id INTEGER,
@@ -45,7 +42,6 @@ async def init_db():
                 timestamp INTEGER
             )
         """)
-
         await db.commit()
         logger.info("БД инициализирована.")
 
@@ -123,7 +119,6 @@ async def get_groups(user_id: int):
 
 
 async def remove_group(user_id: int, group_url: str):
-    """Удаляет один узел из базы пользователя"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "DELETE FROM groups WHERE user_id = ? AND group_url = ?",
