@@ -1,4 +1,4 @@
-# main.py (полный)
+# main.py
 import asyncio
 import logging
 import random
@@ -276,7 +276,7 @@ def get_back_inline(to_settings=False, to_accounts=False, to_text=False, to_grou
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- АВТОРИЗАЦИЯ: ВСПОМОГАТЕЛЬНЫЕ ---
+# --- АВТОРИЗАЦИЯ ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def cleanup_pending_auth(user_id: int):
@@ -320,7 +320,7 @@ async def finalize_auth(user_id: int, message: types.Message, state: FSMContext)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- БАЗОВЫЕ ХЕНДЛЕРЫ ---
+# --- БАЗОВЫЕ ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @dp.message(Command("start"))
@@ -690,9 +690,9 @@ async def add_groups_start(callback: types.CallbackQuery, state: FSMContext):
         "📥 **ИМПОРТ БАЗЫ УЗЛОВ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте список одним сообщением.\n"
-        "Каждая строка — один узел: `@username` или `https://t.me/username`.\n\n"
+        "Каждая строка — один узел: `@username`, `https://t.me/username` или invite-ссылка.\n\n"
         "Пример:\n"
-        "```\n@chat1\nhttps://t.me/chat2\n@chat3\n```",
+        "```\n@chat1\nhttps://t.me/chat2\nhttps://t.me/+AbCdEfGhIjKlMnOp\n```",
         parse_mode="Markdown",
         reply_markup=get_back_inline(to_groups=True)
     )
@@ -1014,7 +1014,7 @@ async def view_statistics_handler(callback: types.CallbackQuery):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- ЗАПУСК / ОСТАНОВКА РАССЫЛКИ ---
+# --- СТАРТ/СТОП РАССЫЛКИ ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @dp.callback_query(F.data == "start_mailing")
@@ -1131,9 +1131,13 @@ async def run_mailing_task(user_id: int):
                             username=""
                         )
 
-                        ok = await worker.send_to_group(
-                            app, user_id, phone, group_url, rendered
-                        )
+                        try:
+                            ok = await worker.send_to_group(
+                                app, user_id, phone, group_url, rendered
+                            )
+                        except Exception as e:
+                            logger.error(f"[Mailing] send_to_group упал на {group_url}: {e}")
+                            ok = False
 
                         delay = random.randint(settings["min_delay"], settings["max_delay"])
                         logger.info(f"[Mailing] Пауза {delay} сек. (успех={ok})")
