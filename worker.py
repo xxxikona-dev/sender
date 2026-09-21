@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import re
 from pyrogram import Client
 from pyrogram.enums import ChatAction
 from pyrogram.errors import (
@@ -120,10 +121,16 @@ async def terminate_session(phone: str, session_str: str):
             pass
 
 
+def _is_invite_hash(s: str) -> bool:
+    """Invite-хэш: 16+ символов, буквы/цифры/подчёркивания, обычно без @"""
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]{16,}", s))
+
+
 def _normalize_peer(group_url: str) -> str:
     s = group_url.strip()
     s = s.replace("https://t.me/", "").replace("http://t.me/", "")
     s = s.replace("t.me/", "")
+    s = s.replace("joinchat/", "")
     s = s.lstrip("@")
     s = s.rstrip("/")
     return s
@@ -135,10 +142,10 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
         return False
 
     chat = None
+    is_invite = _is_invite_hash(chat_peer)
 
-    try:
-        chat = await app.get_chat(chat_peer)
-    except PeerIdInvalid:
+    # --- 1. Получаем чат ---
+    if is_invite:
         try:
             chat = await app.join_chat(chat_peer)
             await asyncio.sleep(3)
@@ -147,9 +154,9 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
                 chat = await app.get_chat(chat_peer)
             except Exception as e:
                 logger.warning(f"[{phone}] get_chat после UserAlreadyParticipant: {e}")
-                return False
+                chat = chat_peer
         except (InviteHashExpired, InviteHashInvalid) as e:
-            logger.info(f"[{phone}] Ссылка недействительна: {group_url} ({type(e).__name__})")
+            logger.info(f"[{phone}] Инвайт недействителен: {group_url} ({type(e).__name__})")
             await db.remove_group(user_id, group_url)
             return False
         except FloodWait as e:
@@ -159,29 +166,57 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
         except Exception as e:
             logger.warning(f"[{phone}] Не удалось войти в {group_url}: {e}")
             return False
-    except DEAD_CHAT_ERRORS as e:
-        logger.info(f"[{phone}] Чат недоступен ({type(e).__name__}): {group_url} — удаляем.")
-        await db.remove_group(user_id, group_url)
-        return False
-    except FloodWait as e:
-        logger.warning(f"[{phone}] FloodWait get_chat: {e.value} сек.")
-        await asyncio.sleep(e.value + 2)
-        return False
-    except Exception as e:
-        logger.warning(f"[{phone}] get_chat {group_url}: {e}")
-        return False
+    else:
+        try:
+            chat = await app.get_chat(chat_peer)
+        except PeerIdInvalid:
+            try:
+                chat = await app.join_chat(chat_peer)
+                await asyncio.sleep(3)
+            except UserAlreadyParticipant:
+                try:
+                    chat = await app.get_chat(chat_peer)
+                except Exception as e:
+                    logger.warning(f"[{phone}] get_chat после UserAlreadyParticipant: {e}")
+                    chat = chat_peer
+            except FloodWait as e:
+                logger.warning(f"[{phone}] FloodWait при join: {e.value} сек.")
+                await asyncio.sleep(e.value + 2)
+                return False
+            except Exception as e:
+                logger.warning(f"[{phone}] Не удалось войти в {group_url}: {e}")
+                return False
+        except UsernameNotOccupied:
+            logger.info(f"[{phone}] Username не существует: {group_url} — удаляем.")
+            await db.remove_group(user_id, group_url)
+            return False
+        except DEAD_CHAT_ERRORS as e:
+            logger.info(f"[{phone}] Чат недоступен ({type(e).__name__}): {group_url} — удаляем.")
+            await db.remove_group(user_id, group_url)
+            return False
+        except FloodWait as e:
+            logger.warning(f"[{phone}] FloodWait get_chat: {e.value} сек.")
+            await asyncio.sleep(e.value + 2)
+            return False
+        except Exception as e:
+            logger.warning(f"[{phone}] get_chat {group_url}: {e}")
+            return False
 
     if chat is None:
         return False
 
+    # --- 2. typing ---
     try:
-        await app.send_chat_action(chat.id, ChatAction.TYPING)
+        chat_id = chat.id if hasattr(chat, "id") else chat
+        await app.send_chat_action(chat_id, ChatAction.TYPING)
         await asyncio.sleep(random.randint(2, 4))
     except Exception:
         pass
 
+    # --- 3. Отправка ---
     try:
-        await app.send_message(chat.id, text)
+        target = chat.id if hasattr(chat, "id") else chat
+        await app.send_message(target, text)
         await db.log_delivery(user_id, phone, group_url)
         logger.info(f"[{phone}] ✅ Доставлено -> {chat_peer}")
         return True
@@ -200,7 +235,8 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
             logger.info(f"[{phone}] ⏳ Slowmode {e.value} сек в {group_url}, ждём...")
             await asyncio.sleep(e.value + 2)
             try:
-                await app.send_message(chat.id, text)
+                target = chat.id if hasattr(chat, "id") else chat
+                await app.send_message(target, text)
                 await db.log_delivery(user_id, phone, group_url)
                 logger.info(f"[{phone}] ✅ Доставлено (после slowmode) -> {chat_peer}")
                 return True
@@ -214,6 +250,11 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
     except FloodWait as e:
         logger.warning(f"[{phone}] FloodWait {e.value} сек — пропускаем чат.")
         await asyncio.sleep(e.value + 2)
+        return False
+
+    except UsernameNotOccupied:
+        logger.info(f"[{phone}] Username исчез: {group_url} — удаляем.")
+        await db.remove_group(user_id, group_url)
         return False
 
     except DEAD_CHAT_ERRORS as e:
