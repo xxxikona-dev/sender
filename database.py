@@ -1,17 +1,14 @@
-# database.py (без подписок и платежей)
+# database.py
 import aiosqlite
 import time
 import logging
-from datetime import datetime, timedelta
 
 DB_NAME = "bot_data.db"
 logger = logging.getLogger("Database Module")
 
 
 async def init_db():
-    """Инициализация базы данных и создание всех необходимых таблиц при старте бота"""
     async with aiosqlite.connect(DB_NAME) as db:
-        # Таблица пользователей
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -22,7 +19,6 @@ async def init_db():
             )
         """)
 
-        # Таблица подключенных аккаунтов (РМ) с поддержкой флага активности is_active
         await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 user_id INTEGER,
@@ -33,7 +29,6 @@ async def init_db():
             )
         """)
 
-        # Таблица базы данных чатов/узлов для рассылки
         await db.execute("""
             CREATE TABLE IF NOT EXISTS groups (
                 user_id INTEGER,
@@ -42,7 +37,6 @@ async def init_db():
             )
         """)
 
-        # Таблица логов отправки для ведения сквозной статистики
         await db.execute("""
             CREATE TABLE IF NOT EXISTS statistics (
                 user_id INTEGER,
@@ -53,15 +47,10 @@ async def init_db():
         """)
 
         await db.commit()
-        logger.info("Структура базы данных SQLite успешно проверена/инициализирована.")
+        logger.info("БД инициализирована.")
 
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- БЛОК РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ---
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def register_or_update_user(user_id: int, username: str = "", first_name: str = "", last_name: str = ""):
-    """Регистрирует или обновляет информацию о пользователе"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
             INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, registered_at)
@@ -70,12 +59,7 @@ async def register_or_update_user(user_id: int, username: str = "", first_name: 
         await db.commit()
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- ОСТАЛЬНЫЕ ФУНКЦИИ (АККАУНТЫ, ГРУППЫ, СТАТИСТИКА) ---
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 async def add_account(user_id: int, phone: str, session_string: str):
-    """Добавляет новый аккаунт или обновляет сессию существующего (по умолчанию активен)"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT OR REPLACE INTO accounts (user_id, phone, session_string, is_active) VALUES (?, ?, ?, 1)",
@@ -85,7 +69,6 @@ async def add_account(user_id: int, phone: str, session_string: str):
 
 
 async def get_accounts(user_id: int):
-    """Возвращает список всех аккаунтов пользователя со статусами спам-блока и активности"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             "SELECT phone, session_string, spamblock_status, is_active FROM accounts WHERE user_id = ?",
@@ -95,14 +78,12 @@ async def get_accounts(user_id: int):
 
 
 async def remove_account(phone: str):
-    """Принудительно удаляет аккаунт из локальной базы данных"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM accounts WHERE phone = ?", (phone,))
         await db.commit()
 
 
 async def update_spamblock(phone: str, status: str):
-    """Обновляет статус проверки на спам-блок для конкретного номера телефона"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "UPDATE accounts SET spamblock_status = ? WHERE phone = ?",
@@ -112,7 +93,6 @@ async def update_spamblock(phone: str, status: str):
 
 
 async def toggle_account_status(phone: str, current_status: int) -> int:
-    """Переключает статус активности аккаунта"""
     new_status = 0 if current_status == 1 else 1
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -124,7 +104,6 @@ async def toggle_account_status(phone: str, current_status: int) -> int:
 
 
 async def add_group(user_id: int, group_url: str):
-    """Добавляет ссылку на чат в базу данных"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT OR IGNORE INTO groups (user_id, group_url) VALUES (?, ?)",
@@ -134,7 +113,6 @@ async def add_group(user_id: int, group_url: str):
 
 
 async def get_groups(user_id: int):
-    """Возвращает список всех сохраненных ссылок на группы для пользователя"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             "SELECT group_url FROM groups WHERE user_id = ?",
@@ -144,15 +122,23 @@ async def get_groups(user_id: int):
             return [row[0] for row in rows]
 
 
+async def remove_group(user_id: int, group_url: str):
+    """Удаляет один узел из базы пользователя"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "DELETE FROM groups WHERE user_id = ? AND group_url = ?",
+            (user_id, group_url)
+        )
+        await db.commit()
+
+
 async def clear_groups(user_id: int):
-    """Полностью очищает базу данных чатов для конкретного пользователя"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM groups WHERE user_id = ?", (user_id,))
         await db.commit()
 
 
 async def log_delivery(user_id: int, phone: str, group_url: str):
-    """Фиксирует факт успешной отправки сообщения"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT INTO statistics (user_id, phone, group_url, timestamp) VALUES (?, ?, ?, ?)",
@@ -162,9 +148,7 @@ async def log_delivery(user_id: int, phone: str, group_url: str):
 
 
 async def get_stats(user_id: int) -> dict:
-    """Вычисляет количество отправленных сообщений за разные промежутки времени"""
     now = int(time.time())
-
     one_hour = now - 3600
     one_day = now - 86400
     one_week = now - 604800
@@ -172,7 +156,6 @@ async def get_stats(user_id: int) -> dict:
 
     async with aiosqlite.connect(DB_NAME) as db:
         stats = {}
-
         queries = {
             "hour": ("SELECT COUNT(*) FROM statistics WHERE user_id = ? AND timestamp >= ?", one_hour),
             "day": ("SELECT COUNT(*) FROM statistics WHERE user_id = ? AND timestamp >= ?", one_day),
@@ -180,7 +163,6 @@ async def get_stats(user_id: int) -> dict:
             "month": ("SELECT COUNT(*) FROM statistics WHERE user_id = ? AND timestamp >= ?", one_month),
             "all": ("SELECT COUNT(*) FROM statistics WHERE user_id = ?", None)
         }
-
         for key, (sql, param) in queries.items():
             if param is not None:
                 async with db.execute(sql, (user_id, param)) as cursor:
@@ -190,5 +172,4 @@ async def get_stats(user_id: int) -> dict:
                 async with db.execute(sql, (user_id,)) as cursor:
                     row = await cursor.fetchone()
                     stats[key] = row[0]
-
         return stats
