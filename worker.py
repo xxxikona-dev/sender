@@ -4,18 +4,55 @@ import logging
 import random
 from pyrogram import Client
 from pyrogram.enums import ChatAction
-from pyrogram.errors import FloodWait, PeerIdInvalid
+from pyrogram.errors import (
+    FloodWait,
+    PeerIdInvalid,
+    UsernameNotOccupied,
+    UsernameInvalid,
+    ChatWriteForbidden,
+    UserBannedInChannel,
+    ChannelPrivate,
+    ChatAdminRequired,
+    SlowmodeWait,
+    ChatForbidden,
+    UserAlreadyParticipant,
+    InviteHashExpired,
+    InviteHashInvalid,
+    AuthKeyUnregistered,
+    UserDeactivated,
+    SessionRevoked,
+    RPCError,
+)
 import database as db
 import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Worker Engine")
 
+logging.getLogger("pyrogram").setLevel(logging.CRITICAL)
+logging.getLogger("pyrogram.session").setLevel(logging.CRITICAL)
+logging.getLogger("pyrogram.connection").setLevel(logging.CRITICAL)
+
+
+DEAD_CHAT_ERRORS = (
+    UsernameNotOccupied,
+    UsernameInvalid,
+    ChannelPrivate,
+    ChatForbidden,
+    UserBannedInChannel,
+    ChatAdminRequired,
+    InviteHashExpired,
+    InviteHashInvalid,
+)
+
+DEAD_ACCOUNT_ERRORS = (
+    AuthKeyUnregistered,
+    UserDeactivated,
+    SessionRevoked,
+)
+
 
 async def check_account_spamblock(phone: str, session_str: str):
-    """
-    Фоновый запуск аккаунта для считывания вердикта от официального @Spambot.
-    """
     app = Client(
         name=f"check_{phone}",
         api_id=config.API_ID,
@@ -25,13 +62,11 @@ async def check_account_spamblock(phone: str, session_str: str):
     )
     try:
         await app.start()
-        logger.info(f"[{phone}] Проверка спам-блока: Отправка команды в @Spambot...")
-
+        logger.info(f"[{phone}] Проверка спам-блока: отправка в @Spambot...")
         await app.send_message("Spambot", "/start")
         await asyncio.sleep(2.5)
 
         status_text = "⚠️ Ошибка парсинга"
-
         async for message in app.get_chat_history("Spambot", limit=1):
             if message.text:
                 text = message.text.lower()
@@ -45,10 +80,13 @@ async def check_account_spamblock(phone: str, session_str: str):
                 status_text = "❌ Нет ответа бота"
 
         await db.update_spamblock(phone, status_text)
-        logger.info(f"[{phone}] Результат сканирования сохранен: {status_text}")
+        logger.info(f"[{phone}] СПАМ-БЛОК: {status_text}")
 
+    except DEAD_ACCOUNT_ERRORS as e:
+        logger.warning(f"[{phone}] Аккаунт мёртв ({type(e).__name__}). Удаляем.")
+        await db.remove_account(phone)
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка сканирования спам-блока: {e}")
+        logger.error(f"[{phone}] Ошибка проверки спам-блока: {e}")
         await db.update_spamblock(phone, "⚠️ Ошибка проверки")
     finally:
         try:
@@ -58,9 +96,6 @@ async def check_account_spamblock(phone: str, session_str: str):
 
 
 async def terminate_session(phone: str, session_str: str):
-    """
-    Полная деавторизация аккаунта на серверах Telegram (Log Out).
-    """
     app = Client(
         name=f"kill_{phone}",
         api_id=config.API_ID,
@@ -70,43 +105,130 @@ async def terminate_session(phone: str, session_str: str):
     )
     try:
         await app.start()
-        logger.info(f"[{phone}] Посылка сигнала логаута на сервера Telegram...")
         await app.log_out()
         await db.remove_account(phone)
-        logger.info(f"[{phone}] Сессия успешно аннулирована и стерта из базы.")
-    except Exception as e:
-        logger.error(f"[{phone}] Серверный логаут не удался ({e}). Принудительное локальное удаление.")
+        logger.info(f"[{phone}] Сессия аннулирована.")
+    except DEAD_ACCOUNT_ERRORS:
         await db.remove_account(phone)
-
-
-async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, text: str):
-    """
-    Ядро отправки сообщения в конкретный чат.
-    """
-    try:
-        chat_peer = group_url.replace("https://t.me/", "").replace("@", "").strip()
-
+    except Exception as e:
+        logger.error(f"[{phone}] Ошибка логаута ({e}). Удаляем локально.")
+        await db.remove_account(phone)
+    finally:
         try:
-            chat = await app.get_chat(chat_peer)
-        except PeerIdInvalid:
-            chat = await app.join_chat(chat_peer)
-            await asyncio.sleep(3)
-
-        try:
-            await app.send_chat_action(chat.id, ChatAction.TYPING)
-            await asyncio.sleep(random.randint(2, 4))
+            await app.stop()
         except Exception:
             pass
 
-        await app.send_message(chat.id, text)
 
+def _normalize_peer(group_url: str) -> str:
+    s = group_url.strip()
+    s = s.replace("https://t.me/", "").replace("http://t.me/", "")
+    s = s.replace("t.me/", "")
+    s = s.lstrip("@")
+    s = s.rstrip("/")
+    return s
+
+
+async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, text: str) -> bool:
+    chat_peer = _normalize_peer(group_url)
+    if not chat_peer:
+        return False
+
+    chat = None
+
+    try:
+        chat = await app.get_chat(chat_peer)
+    except PeerIdInvalid:
+        try:
+            chat = await app.join_chat(chat_peer)
+            await asyncio.sleep(3)
+        except UserAlreadyParticipant:
+            try:
+                chat = await app.get_chat(chat_peer)
+            except Exception as e:
+                logger.warning(f"[{phone}] get_chat после UserAlreadyParticipant: {e}")
+                return False
+        except (InviteHashExpired, InviteHashInvalid) as e:
+            logger.info(f"[{phone}] Ссылка недействительна: {group_url} ({type(e).__name__})")
+            await db.remove_group(user_id, group_url)
+            return False
+        except FloodWait as e:
+            logger.warning(f"[{phone}] FloodWait при join: {e.value} сек.")
+            await asyncio.sleep(e.value + 2)
+            return False
+        except Exception as e:
+            logger.warning(f"[{phone}] Не удалось войти в {group_url}: {e}")
+            return False
+    except DEAD_CHAT_ERRORS as e:
+        logger.info(f"[{phone}] Чат недоступен ({type(e).__name__}): {group_url} — удаляем.")
+        await db.remove_group(user_id, group_url)
+        return False
+    except FloodWait as e:
+        logger.warning(f"[{phone}] FloodWait get_chat: {e.value} сек.")
+        await asyncio.sleep(e.value + 2)
+        return False
+    except Exception as e:
+        logger.warning(f"[{phone}] get_chat {group_url}: {e}")
+        return False
+
+    if chat is None:
+        return False
+
+    try:
+        await app.send_chat_action(chat.id, ChatAction.TYPING)
+        await asyncio.sleep(random.randint(2, 4))
+    except Exception:
+        pass
+
+    try:
+        await app.send_message(chat.id, text)
         await db.log_delivery(user_id, phone, group_url)
-        logger.info(f"[{phone}] Доставлено в чат -> {chat_peer}")
+        logger.info(f"[{phone}] ✅ Доставлено -> {chat_peer}")
+        return True
+
+    except ChatWriteForbidden:
+        logger.info(f"[{phone}] 🚫 Нет прав писать в {group_url} — пропускаем.")
+        return False
+
+    except UserBannedInChannel:
+        logger.info(f"[{phone}] 🚫 Забанен в {group_url} — удаляем из базы.")
+        await db.remove_group(user_id, group_url)
+        return False
+
+    except SlowmodeWait as e:
+        if e.value <= 60:
+            logger.info(f"[{phone}] ⏳ Slowmode {e.value} сек в {group_url}, ждём...")
+            await asyncio.sleep(e.value + 2)
+            try:
+                await app.send_message(chat.id, text)
+                await db.log_delivery(user_id, phone, group_url)
+                logger.info(f"[{phone}] ✅ Доставлено (после slowmode) -> {chat_peer}")
+                return True
+            except Exception as e2:
+                logger.warning(f"[{phone}] Повтор после slowmode не удался: {e2}")
+                return False
+        else:
+            logger.info(f"[{phone}] ⏳ Slowmode {e.value} сек — пропускаем {group_url}.")
+            return False
 
     except FloodWait as e:
-        logger.warning(f"[{phone}] FloodWait на {e.value} сек.")
+        logger.warning(f"[{phone}] FloodWait {e.value} сек — пропускаем чат.")
         await asyncio.sleep(e.value + 2)
-    except OSError:
-        logger.error(f"[{phone}] Разрыв сокета при работе с узлом {group_url}")
+        return False
+
+    except DEAD_CHAT_ERRORS as e:
+        logger.info(f"[{phone}] Чат мёртв ({type(e).__name__}): {group_url} — удаляем.")
+        await db.remove_group(user_id, group_url)
+        return False
+
+    except OSError as e:
+        logger.warning(f"[{phone}] Разрыв сокета {group_url}: {e}")
+        return False
+
+    except RPCError as e:
+        logger.warning(f"[{phone}] RPC-ошибка {group_url}: {e}")
+        return False
+
     except Exception as e:
-        logger.error(f"[{phone}] Ошибка отправки в чат {group_url} -> {e}")
+        logger.warning(f"[{phone}] Ошибка {group_url}: {e}")
+        return False
