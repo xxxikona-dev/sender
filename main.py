@@ -11,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
+from aiogram.exceptions import TelegramBadRequest
 
 from pyrogram import Client
 from pyrogram.errors import (
@@ -47,6 +48,19 @@ dp = Dispatcher(storage=MemoryStorage())
 users_mailing_configs: dict[int, dict] = {}
 pending_auth_clients: dict[int, dict] = {}
 active_mailing_tasks: dict[int, asyncio.Task] = {}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- БЕЗОПАСНЫЙ EDIT ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def safe_edit(message, text, parse_mode="Markdown", reply_markup=None):
+    try:
+        await message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            return
+        raise
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -344,7 +358,7 @@ async def back_to_menu_handler(callback: types.CallbackQuery, state: FSMContext)
     await cleanup_pending_auth(callback.from_user.id)
     await state.clear()
     text, markup = get_main_menu(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer()
 
 
@@ -357,7 +371,7 @@ async def manage_accounts_cmd(callback: types.CallbackQuery, state: FSMContext):
     await cleanup_pending_auth(callback.from_user.id)
     await state.clear()
     text, markup = await get_accounts_keyboard(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer()
 
 
@@ -374,10 +388,7 @@ async def add_account_start(callback: types.CallbackQuery, state: FSMContext):
         "Пример: `+79991234567`\n\n"
         "⚠️ На этот номер придёт код подтверждения от Telegram."
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
-        reply_markup=get_back_inline(to_accounts=True)
-    )
+    await safe_edit(callback.message, text, reply_markup=get_back_inline(to_accounts=True))
     await callback.answer()
 
 
@@ -519,8 +530,8 @@ async def act_account_handler(callback: types.CallbackQuery):
         f"🔄 Статус: {'🟢 Активен' if is_active == 1 else '💤 Отключен'}\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
+    await safe_edit(
+        callback.message, text,
         reply_markup=get_account_actions_keyboard(phone, is_active)
     )
     await callback.answer()
@@ -554,8 +565,8 @@ async def toggle_account_handler(callback: types.CallbackQuery):
         f"🔄 Статус: {'🟢 Активен' if is_active == 1 else '💤 Отключен'}\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
+    await safe_edit(
+        callback.message, text,
         reply_markup=get_account_actions_keyboard(phone, is_active)
     )
 
@@ -582,7 +593,7 @@ async def check_spam_single(callback: types.CallbackQuery):
     account = next((a for a in accounts if a[0] == phone), None)
     if not account:
         text, markup = await get_accounts_keyboard(callback.from_user.id)
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+        await safe_edit(callback.message, text, reply_markup=markup)
         return
 
     _, _, status, is_active = account
@@ -594,8 +605,8 @@ async def check_spam_single(callback: types.CallbackQuery):
         f"🔄 Статус: {'🟢 Активен' if is_active == 1 else '💤 Отключен'}\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
+    await safe_edit(
+        callback.message, text,
         reply_markup=get_account_actions_keyboard(phone, is_active)
     )
 
@@ -616,7 +627,7 @@ async def check_all_spam_handler(callback: types.CallbackQuery):
             logger.error(f"[Spam] {phone}: {e}")
 
     text, markup = await get_accounts_keyboard(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
 
 
 @dp.callback_query(F.data.startswith("kill_"))
@@ -639,7 +650,7 @@ async def kill_single_account(callback: types.CallbackQuery):
         await db.remove_account(phone)
 
     text, markup = await get_accounts_keyboard(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
 
 
 @dp.callback_query(F.data == "kill_all_sessions")
@@ -659,7 +670,7 @@ async def kill_all_sessions_handler(callback: types.CallbackQuery):
             await db.remove_account(phone)
 
     text, markup = await get_accounts_keyboard(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -674,26 +685,23 @@ async def manage_groups_handler(callback: types.CallbackQuery, state: FSMContext
         f"👥 **БАЗА АДРЕСАТОВ**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"Сохранено узлов: **{len(groups)}**\n\n"
-        f"Импортируйте список `@username` или `https://t.me/...` одним сообщением (по одному на строку)."
+        f"Импортируйте список `@username`, `https://t.me/...` или invite-ссылку одним сообщением (по одному на строку)."
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
-        reply_markup=get_groups_menu()
-    )
+    await safe_edit(callback.message, text, reply_markup=get_groups_menu())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "add_groups")
 async def add_groups_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(GroupStates.waiting_for_links)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "📥 **ИМПОРТ БАЗЫ УЗЛОВ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте список одним сообщением.\n"
-        "Каждая строка — один узел: `@username`, `https://t.me/username` или invite-ссылка.\n\n"
+        "Каждая строка — один узел: `@username`, `https://t.me/username` или `https://t.me/+inviteHash`.\n\n"
         "Пример:\n"
         "```\n@chat1\nhttps://t.me/chat2\nhttps://t.me/+AbCdEfGhIjKlMnOp\n```",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_groups=True)
     )
     await callback.answer()
@@ -708,9 +716,23 @@ async def process_groups_input(message: types.Message, state: FSMContext):
 
     added = 0
     for raw in lines:
-        normalized = raw.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
+        normalized = raw.strip()
+        # Убираем https://t.me/ и http://t.me/, но сохраняем ведущий +
+        if normalized.startswith("https://t.me/"):
+            normalized = normalized[len("https://t.me/"):]
+        elif normalized.startswith("http://t.me/"):
+            normalized = normalized[len("http://t.me/"):]
+        elif normalized.startswith("t.me/"):
+            normalized = normalized[len("t.me/"):]
+
+        # Убираем @ только у username, но не у invite
+        if normalized.startswith("@"):
+            normalized = normalized[1:]
+
+        normalized = normalized.strip()
         if not normalized:
             continue
+
         await db.add_group(message.from_user.id, normalized)
         added += 1
 
@@ -749,10 +771,7 @@ async def clear_groups_handler(callback: types.CallbackQuery):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"Сохранено узлов: **{len(groups)}**"
     )
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
-        reply_markup=get_groups_menu()
-    )
+    await safe_edit(callback.message, text, reply_markup=get_groups_menu())
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -763,19 +782,19 @@ async def clear_groups_handler(callback: types.CallbackQuery):
 async def change_text_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     text, markup = get_text_menu(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer()
 
 
 @dp.callback_query(F.data == "edit_text")
 async def edit_text_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(TextStates.waiting_for_text)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "✏️ **ВВЕДИТЕ НОВЫЙ ТЕКСТ РАССЫЛКИ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте текст одним сообщением.\n"
         "Можно использовать `{name}`, `{username}`, `{chat}` — они будут заменены при отправке.",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_text=True)
     )
     await callback.answer()
@@ -784,12 +803,12 @@ async def edit_text_start(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "upload_text")
 async def upload_text_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(TextStates.waiting_for_text)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "📎 **ЗАГРУЗКА ТЕКСТА ИЗ ФАЙЛА**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте `.txt` файл с текстом рассылки.\n"
         "Кодировка: UTF-8. Максимум 1 МБ.",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_text=True)
     )
     await callback.answer()
@@ -801,7 +820,7 @@ async def reset_text_handler(callback: types.CallbackQuery, state: FSMContext):
     settings["text"] = "Привет! Это стандартный текст рассылки. Измените его в меню."
     await callback.answer("✅ Текст сброшен к стандартному.", show_alert=True)
     text, markup = get_text_menu(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
 
 
 @dp.message(TextStates.waiting_for_text, F.text)
@@ -869,18 +888,18 @@ async def process_text_document(message: types.Message, state: FSMContext):
 async def show_settings_handler(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     text, markup = get_settings_menu(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer()
 
 
 @dp.callback_query(F.data == "set_min_delay")
 async def set_min_delay_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.waiting_for_min)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "⏱ **ВВЕДИТЕ НИЖНИЙ ПОРОГ ЗАДЕРЖКИ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте число в секундах (например, `30`).",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_settings=True)
     )
     await callback.answer()
@@ -914,11 +933,11 @@ async def process_min_delay(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "set_max_delay")
 async def set_max_delay_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.waiting_for_max)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "⏱ **ВВЕДИТЕ ВЕРХНИЙ ПОРОГ ЗАДЕРЖКИ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте число в секундах (например, `120`).",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_settings=True)
     )
     await callback.answer()
@@ -950,11 +969,11 @@ async def process_max_delay(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "set_wave_limit")
 async def set_wave_limit_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.waiting_for_waves)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "🔄 **ЛИМИТ ИТЕРАЦИЙ**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Отправьте число циклов или `0` для снятия ограничения.",
-        parse_mode="Markdown",
         reply_markup=get_back_inline(to_settings=True)
     )
     await callback.answer()
@@ -985,7 +1004,7 @@ async def toggle_typing_handler(callback: types.CallbackQuery):
     settings["enable_typing"] = not settings["enable_typing"]
 
     text, markup = get_settings_menu(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer("✅ Переключено.")
 
 
@@ -1006,8 +1025,8 @@ async def view_statistics_handler(callback: types.CallbackQuery):
         f"♾ Всего: **{stats['all']}**\n"
     )
     buttons = [[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")]]
-    await callback.message.edit_text(
-        text, parse_mode="Markdown",
+    await safe_edit(
+        callback.message, text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await callback.answer()
@@ -1041,7 +1060,7 @@ async def start_mailing_handler(callback: types.CallbackQuery):
     settings["current_wave"] = 0
 
     text, markup = get_main_menu(user_id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
 
     task = asyncio.create_task(run_mailing_task(user_id))
     active_mailing_tasks[user_id] = task
@@ -1060,7 +1079,7 @@ async def stop_mailing_handler(callback: types.CallbackQuery):
         task.cancel()
 
     text, markup = get_main_menu(user_id)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    await safe_edit(callback.message, text, reply_markup=markup)
     await callback.answer("🛑 Сессия остановлена.")
 
 
