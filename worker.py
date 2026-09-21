@@ -121,18 +121,23 @@ async def terminate_session(phone: str, session_str: str):
             pass
 
 
-def _is_invite_hash(s: str) -> bool:
-    """Invite-хэш: 16+ символов, буквы/цифры/подчёркивания, обычно без @"""
-    return bool(re.fullmatch(r"[A-Za-z0-9_-]{16,}", s))
-
-
 def _normalize_peer(group_url: str) -> str:
+    """
+    Возвращает 'username', '+invite_hash' или 'id'.
+    Сохраняет ведущий '+' для invite-хэшей.
+    """
     s = group_url.strip()
     s = s.replace("https://t.me/", "").replace("http://t.me/", "")
     s = s.replace("t.me/", "")
     s = s.replace("joinchat/", "")
-    s = s.lstrip("@")
-    s = s.rstrip("/")
+
+    # invite-хэш с плюсом
+    if s.startswith("+"):
+        return s
+
+    # просто хэш без плюса — оставляем как есть
+    # (join_chat сам разберётся)
+    s = s.lstrip("@").rstrip("/")
     return s
 
 
@@ -142,7 +147,7 @@ async def send_to_group(app: Client, user_id: int, phone: str, group_url: str, t
         return False
 
     chat = None
-    is_invite = _is_invite_hash(chat_peer)
+    is_invite = chat_peer.startswith("+")
 
     # --- 1. Получаем чат ---
     if is_invite:
